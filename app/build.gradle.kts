@@ -64,6 +64,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
 
-    implementation("io.getstream:webrtc-android:125.0.0")
+    implementation("io.getstream:webrtc-android:1.3.10")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
 }
