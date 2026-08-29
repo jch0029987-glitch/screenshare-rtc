@@ -66,4 +66,6 @@ dependencies {
     
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    implementation("io.getstream:webrtc-android:125.0.0")
+
 }
