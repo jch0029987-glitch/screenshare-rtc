@@ -8,74 +8,94 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                var isStreaming by remember { mutableStateOf(false) }
-                var statusText by remember { mutableStateOf("Ready to start root service") }
-
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "Root WebRTC Streamer",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (isStreaming) MaterialTheme.colorScheme.primaryContainer 
-                                               else MaterialTheme.colorScheme.surfaceVariant
-                            )
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = if (isStreaming) "Status: Active (Rooted)" else "Status: Stopped",
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = statusText,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(32.dp))
-                        
-                        Button(
-                            onClick = { 
-                                isStreaming = !isStreaming
-                                statusText = if (isStreaming) "Executing root binary process..." else "Stream stopped."
-                            },
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isStreaming) MaterialTheme.colorScheme.error 
-                                               else MaterialTheme.colorScheme.primary
-                            )
-                        ) {
-                            Text(text = if (isStreaming) "Stop Stream" else "Start Stream")
-                        }
-                    }
+                    StreamerControlScreen()
                 }
             }
         }
     }
+}
+
+@Composable
+fun StreamerControlScreen() {
+    var isStreaming by remember { mutableStateOf(false) }
+    var statusMessage by remember { mutableStateOf("Idle") }
+    val coroutineScope = rememberCoroutineScope()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = if (isStreaming) "Streamer Status: ACTIVE" else "Streamer Status: STOPPED",
+            style = MaterialTheme.typography.titleMedium
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Log: $statusMessage",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.secondary
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        Button(
+            onClick = {
+                coroutineScope.launch {
+                    if (!isStreaming) {
+                        statusMessage = "Requesting root & starting bridge..."
+                        val success = startRootBridgeWorker()
+                        if (success) {
+                            isStreaming = true
+                            statusMessage = "Bridge worker running"
+                        } else {
+                            statusMessage = "Failed (Root denied or error)"
+                        }
+                    } else {
+                        statusMessage = "Stopping bridge worker..."
+                        stopRootBridgeWorker()
+                        isStreaming = false
+                        statusMessage = "Stopped"
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(text = if (isStreaming) "Stop Stream" else "Start Stream")
+        }
+    }
+}
+
+suspend fun startRootBridgeWorker(): Boolean = withContext(Dispatchers.IO) {
+    return@withContext try {
+        val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "/data/local/tmp/stream"))
+        val exitCode = process.waitFor()
+        exitCode == 0
+    } catch (e: Exception) {
+        false
+    }
+}
+
+suspend fun stopRootBridgeWorker() = withContext(Dispatchers.IO) {
+    try {
+        Runtime.getRuntime().exec(arrayOf("su", "-c", "killall stream")).waitFor()
+    } catch (_: Exception) {}
 }
