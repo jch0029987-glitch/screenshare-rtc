@@ -1,0 +1,9 @@
+package com.jeremy.rootwebrtcstreamer
+
+object WifiHotspotManager {
+    // Since your hotspot is already configured to start on boot, 
+    // we simply return the default Android gateway IP where your browser client can connect.
+    fun getHotspotGatewayIp(): String {
+        return "192.168.43.1"
+    }
+}
