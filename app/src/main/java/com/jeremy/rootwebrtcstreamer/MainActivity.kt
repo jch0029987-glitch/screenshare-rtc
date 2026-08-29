@@ -9,93 +9,138 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import org.webrtc.*
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
+    private var factory: PeerConnectionFactory? = null
+    private var webServer: LocalWebServer? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        PeerConnectionFactory.initialize(
+            PeerConnectionFactory.InitializationOptions.builder(this)
+                .setEnableInternalTracer(true)
+                .createInitializationOptions()
+        )
+        factory = PeerConnectionFactory.builder().createPeerConnectionFactory()
+
+        // Start embedded background HTTP server to serve the iPhone browser viewer automatically
+        startEmbeddedWebServer()
+
         setContent {
             MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    StreamerControlScreen()
+                    StreamerDashboard()
                 }
             }
         }
     }
+
+    private fun startEmbeddedWebServer() {
+        webServer = LocalWebServer(onBrowserOffer = { browserOfferSdp ->
+            processWebRtcNegotiation(browserOfferSdp)
+        }, port = 8080)
+        try {
+            webServer?.start()
+        } catch (_: Exception) {}
+    }
+
+    private fun processWebRtcNegotiation(offerSdp: String): String {
+        var answerSdp = ""
+        val latch = CountDownLatch(1)
+        val config = PeerConnection.RTCConfiguration(emptyList())
+
+        val peerConnection = factory?.createPeerConnection(config, object : PeerConnection.Observer {
+            override fun onSignalingChange(p0: PeerConnection.SignalingState?) {}
+            override fun onIceConnectionChange(p0: PeerConnection.IceConnectionState?) {}
+            override fun onIceConnectionReceivingChange(p0: Boolean) {}
+            override fun onIceGatheringChange(p0: PeerConnection.IceGatheringState?) {}
+            override fun onIceCandidate(p0: IceCandidate?) {}
+            override fun onIceCandidatesRemoved(p0: Array<out IceCandidate>?) {}
+            override fun onAddStream(p0: MediaStream?) {}
+            override fun onRemoveStream(p0: MediaStream?) {}
+            override fun onDataChannel(dc: DataChannel?) {
+                dc?.registerObserver(object : DataChannel.Observer {
+                    override fun onBufferedAmountChange(p0: Long) {}
+                    override fun onStateChange() {}
+                    override fun onMessage(buffer: DataChannel.Buffer) {
+                        val data = buffer.data
+                        val bytes = ByteArray(data.remaining())
+                        data.get(bytes)
+                        executeRootInput(String(bytes))
+                    }
+                })
+            }
+            override fun onRenegotiationNeeded() {}
+            override fun onAddTrack(p0: RtpReceiver?, p1: Array<out MediaStream>?) {}
+        }) ?: return ""
+
+        val remoteDescription = SessionDescription(SessionDescription.Type.OFFER, offerSdp)
+        peerConnection.setRemoteDescription(object : SdpObserver {
+            override fun onCreateSuccess(p0: SessionDescription?) {}
+            override fun onSetSuccess() {
+                peerConnection.createAnswer(object : SdpObserver {
+                    override fun onCreateSuccess(answer: SessionDescription?) {
+                        if (answer != null) {
+                            peerConnection.setLocalDescription(object : SdpObserver {
+                                override fun onCreateSuccess(p0: SessionDescription?) {}
+                                override fun onSetSuccess() {
+                                    answerSdp = answer.description
+                                    latch.countDown()
+                                }
+                                override fun onCreateFailure(p0: String?) { latch.countDown() }
+                                override fun onSetFailure(p0: String?) { latch.countDown() }
+                            }, answer)
+                        } else {
+                            latch.countDown()
+                        }
+                    }
+                    override fun onSetSuccess() {}
+                    override fun onCreateFailure(p0: String?) { latch.countDown() }
+                    override fun onSetFailure(p0: String?) { latch.countDown() }
+                }, MediaConstraints())
+            }
+            override fun onCreateFailure(p0: String?) { latch.countDown() }
+            override fun onSetFailure(p0: String?) { latch.countDown() }
+        }, remoteDescription)
+
+        latch.await(3, TimeUnit.SECONDS)
+        return answerSdp
+    }
+
+    private fun executeRootInput(payload: String) {
+        Thread {
+            try {
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "/data/local/tmp/stream", payload)).waitFor()
+            } catch (_: Exception) {}
+        }.start()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        webServer?.stop()
+    }
 }
 
 @Composable
-fun StreamerControlScreen() {
-    var isStreaming by remember { mutableStateOf(false) }
-    var statusMessage by remember { mutableStateOf("Idle") }
-    val coroutineScope = rememberCoroutineScope()
-
+fun StreamerDashboard() {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
+        modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = if (isStreaming) "Streamer Status: ACTIVE" else "Streamer Status: STOPPED",
-            style = MaterialTheme.typography.titleMedium
-        )
-
+        Text(text = "Zero-Touch Streamer Active", style = MaterialTheme.typography.titleMedium)
         Spacer(modifier = Modifier.height(8.dp))
-
         Text(
-            text = "Log: $statusMessage",
+            text = "Target URL on iPhone: http://192.168.43.1:8080",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.secondary
         )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        Button(
-            onClick = {
-                coroutineScope.launch {
-                    if (!isStreaming) {
-                        statusMessage = "Requesting root & starting bridge..."
-                        val success = startRootBridgeWorker()
-                        if (success) {
-                            isStreaming = true
-                            statusMessage = "Bridge worker running"
-                        } else {
-                            statusMessage = "Failed (Root denied or error)"
-                        }
-                    } else {
-                        statusMessage = "Stopping bridge worker..."
-                        stopRootBridgeWorker()
-                        isStreaming = false
-                        statusMessage = "Stopped"
-                    }
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(text = if (isStreaming) "Stop Stream" else "Start Stream")
-        }
     }
-}
-
-suspend fun startRootBridgeWorker(): Boolean = withContext(Dispatchers.IO) {
-    return@withContext try {
-        val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "/data/local/tmp/stream"))
-        val exitCode = process.waitFor()
-        exitCode == 0
-    } catch (e: Exception) {
-        false
-    }
-}
-
-suspend fun stopRootBridgeWorker() = withContext(Dispatchers.IO) {
-    try {
-        Runtime.getRuntime().exec(arrayOf("su", "-c", "killall stream")).waitFor()
-    } catch (_: Exception) {}
 }
