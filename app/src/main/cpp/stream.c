@@ -4,44 +4,46 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <linux/input.h>
-#include <rtc/rtc.h>
 
-int bridge_worker_running = 0;
+int main(int argc, char *argv[]) {
+    if (argc < 2) return 1;
 
-void bridge_worker_on_message(int dc, const char *message, int size, void *user_ptr) {
-    printf("[Stream HID] Received input command: %.*s\n", size, message);
-}
+    int fd = open("/dev/input/event0", O_WRONLY | O_CLOEXEC);
+    if (fd < 0) return 1;
 
-int bridge_worker_init() {
-    printf("[*] Initializing WebRTC stream worker...\n");
-    
-    rtcConfiguration config;
-    memset(&config, 0, sizeof(config));
-    const char *stunServers[] = {"stun:stun.l.google.com:19302"};
-    config.iceServers = stunServers;
-    config.iceServerSize = 1;
+    char *payload = argv[1];
+    int x = 0, y = 0, action = 0;
 
-    int pc = rtcCreatePeerConnection(&config);
-    if (pc < 0) {
-        fprintf(stderr, "[-] Failed to create WebRTC peer connection\n");
-        return -1;
+    if (sscanf(payload, "%d,%d,%d", &action, &x, &y) >= 1) {
+        struct input_event ev;
+
+        if (x > 0 && y > 0) {
+            memset(&ev, 0, sizeof(ev));
+            ev.type = EV_ABS;
+            ev.code = ABS_MT_POSITION_X;
+            ev.value = x;
+            write(fd, &ev, sizeof(ev));
+
+            memset(&ev, 0, sizeof(ev));
+            ev.type = EV_ABS;
+            ev.code = ABS_MT_POSITION_Y;
+            ev.value = y;
+            write(fd, &ev, sizeof(ev));
+        }
+
+        memset(&ev, 0, sizeof(ev));
+        ev.type = EV_KEY;
+        ev.code = BTN_TOUCH;
+        ev.value = (action == 0) ? 1 : 0;
+        write(fd, &ev, sizeof(ev));
+
+        memset(&ev, 0, sizeof(ev));
+        ev.type = EV_SYN;
+        ev.code = SYN_REPORT;
+        ev.value = 0;
+        write(fd, &ev, sizeof(ev));
     }
 
-    int dc = rtcCreateDataChannel(pc, "stream-control");
-    if (dc >= 0) {
-        rtcSetMessageCallback(dc, bridge_worker_on_message);
-    }
-
-    bridge_worker_running = 1;
-    return pc;
-}
-
-void bridge_worker_loop_step(int pc) {
-    usleep(50000); 
-}
-
-void bridge_worker_stop(int pc) {
-    printf("[*] Stopping stream worker...\n");
-    bridge_worker_running = 0;
-    rtcClosePeerConnection(pc);
+    close(fd);
+    return 0;
 }
