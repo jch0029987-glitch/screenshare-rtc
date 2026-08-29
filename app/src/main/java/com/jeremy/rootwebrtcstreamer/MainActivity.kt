@@ -20,6 +20,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        extractAndPrepareBinary()
+
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(this)
                 .setEnableInternalTracer(true)
@@ -27,7 +29,6 @@ class MainActivity : ComponentActivity() {
         )
         factory = PeerConnectionFactory.builder().createPeerConnectionFactory()
 
-        // Start embedded background HTTP server to serve the iPhone browser viewer automatically
         startEmbeddedWebServer()
 
         setContent {
@@ -42,10 +43,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun extractAndPrepareBinary() {
+        Thread {
+            try {
+                val sourcePath = applicationInfo.nativeLibraryDir + "/libstream.so"
+                val targetPath = "/data/local/tmp/stream"
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "cp $sourcePath $targetPath && chmod 755 $targetPath")).waitFor()
+            } catch (_: Exception) {}
+        }.start()
+    }
+
     private fun startEmbeddedWebServer() {
         webServer = LocalWebServer(onBrowserOffer = { browserOfferSdp ->
             processWebRtcNegotiation(browserOfferSdp)
         }, port = 8080)
+        
         try {
             webServer?.start()
         } catch (_: Exception) {}
@@ -135,10 +147,10 @@ fun StreamerDashboard() {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(text = "Zero-Touch Streamer Active", style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(8.dp))
+        Text(text = "Zero-Touch API 36 Streamer Active", style = MaterialTheme.typography.titleMedium)
+        Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "Target URL on iPhone: http://192.168.43.1:8080",
+            text = "iPhone Target: http://192.168.43.1:8080",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.secondary
         )
