@@ -1,56 +1,100 @@
 package com.jeremy.rootwebrtcstreamer
 
 import fi.iki.elonen.NanoHTTPD
+import java.io.IOException
 
-class LocalWebServer(private val onBrowserOffer: (String) -> String, port: Int = 8080) : NanoHTTPD(port) {
+class LocalWebServer(
+    private val onBrowserOffer: (String) -> String,
+    port: Int = 8080
+) : NanoHTTPD(port) {
+
     override fun serve(session: IHTTPSession): Response {
-        if (session.uri == "/negotiate" && session.method == Method.POST) {
+        val uri = session.uri
+
+        if (uri == "/offer" && session.method == Method.POST) {
             val map = HashMap<String, String>()
-            session.parseBody(map)
-            val browserOfferSdp = map["postData"] ?: ""
-            
-            // Android generates the answer automatically and returns it back to the iPhone script
-            val answerSdp = onBrowserOffer(browserOfferSdp)
-            return newFixedLengthResponse(Response.Status.OK, "application/json", answerSdp)
+            try {
+                session.parseBody(map)
+            } catch (e: IOException) {
+                return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "IO Error: ${e.message}")
+            } catch (e: ResponseException) {
+                return newFixedLengthResponse(session.status, MIME_PLAINTEXT, "Response Error: ${e.message}")
+            }
+
+            val clientOfferSdp = map["postData"] ?: session.parms["offer"] ?: ""
+            if (clientOfferSdp.isBlank()) {
+                return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing WebRTC offer payload")
+            }
+
+            val answerSdp = onBrowserOffer(clientOfferSdp)
+            if (answerSdp.isBlank()) {
+                return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Failed to generate WebRTC answer")
+            }
+
+            return newFixedLengthResponse(Response.Status.OK, "application/sdp", answerSdp)
         }
 
-        val html = """
+        val htmlContent = """
             <!DOCTYPE html>
-            <html lang="en">
+            <html>
             <head>
-                <meta charset="UTF-8">
-                <title>Auto Streamer</title>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Root WebRTC Streamer</title>
                 <style>
-                    body { background: #000; color: #fff; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
-                    video { width: 100vw; height: 100vh; object-fit: contain; }
+                    body { margin: 0; background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: sans-serif; }
+                    video { width: 100%; height: 100%; object-fit: contain; }
+                    #status { position: absolute; top: 10px; color: #00ff00; font-size: 14px; background: rgba(0,0,0,0.6); padding: 5px 10px; border-radius: 4px; }
                 </style>
             </head>
             <body>
-                <video id="remoteVideo" autoplay playsinline></video>
+                <div id="status">Connecting WebRTC...</div>
+                <video id="remoteVideo" autoplay playsinline muted></video>
                 <script>
-                    async function autoConnect() {
-                        const pc = new RTCPeerConnection({iceServers: []});
-                        pc.ontrack = e => document.getElementById('remoteVideo').srcObject = e.streams[0];
-                        
-                        const dc = pc.createDataChannel("stream-control");
-                        
-                        const offer = await pc.createOffer();
-                        await pc.setLocalDescription(offer);
+                    const videoElement = document.getElementById('remoteVideo');
+                    const statusEl = document.getElementById('status');
+                    
+                    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+                    
+                    pc.ontrack = (event) => {
+                        statusEl.style.display = 'none';
+                        if (videoElement.srcObject !== event.streams[0]) {
+                            videoElement.srcObject = event.streams[0];
+                            videoElement.play().catch(err => console.error("Autoplay prevented:", err));
+                        }
+                    };
 
-                        // Automatically post offer to Android server without user intervention
-                        const response = await fetch('/negotiate', {
-                            method: 'POST',
-                            body: offer.sdp
-                        });
-                        const answerSdp = await response.text();
+                    pc.addTransceiver('video', { direction: 'recvonly' });
 
-                        await pc.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: answerSdp}));
+                    async function startStreaming() {
+                        try {
+                            const offer = await pc.createOffer();
+                            await pc.setLocalDescription(offer);
+
+                            const response = await fetch('/offer', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'text/plain' },
+                                body: offer.sdp
+                            });
+
+                            if (!response.ok) throw new Error('Signaling error: ' + response.statusText);
+
+                            const answerSdp = await response.text();
+                            await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answerSdp }));
+                            statusEl.innerText = "Stream Connected";
+                        } catch (err) {
+                            console.error(err);
+                            statusEl.innerText = "Connection Failed: " + err.message;
+                            statusEl.style.color = "#ff5555";
+                        }
                     }
-                    window.onload = autoConnect;
+
+                    startStreaming();
                 </script>
             </body>
             </html>
         """.trimIndent()
-        return newFixedLengthResponse(Response.Status.OK, "text/html", html)
+
+        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=UTF-8", htmlContent)
     }
 }
