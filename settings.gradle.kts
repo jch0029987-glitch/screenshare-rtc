@@ -7,7 +7,12 @@ pluginManagement {
                 includeGroupByRegex("androidx.*")
             }
         }
-        mavenCentral()
+        mavenCentral {
+            content {
+                includeGroupByRegex("io\\.getstream.*")
+                includeGroupByRegex("org\\.nanohttpd.*")
+            }
+        }
         gradlePluginPortal()
     }
 }
