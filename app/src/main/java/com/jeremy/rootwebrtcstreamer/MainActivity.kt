@@ -27,7 +27,9 @@ class MainActivity : ComponentActivity() {
                 .setEnableInternalTracer(true)
                 .createInitializationOptions()
         )
-        factory = PeerConnectionFactory.builder().createPeerConnectionFactory()
+        
+        val options = PeerConnectionFactory.Options()
+        factory = PeerConnectionFactory.builder().setOptions(options).createPeerConnectionFactory()
 
         startEmbeddedWebServer()
 
@@ -94,6 +96,7 @@ class MainActivity : ComponentActivity() {
         }) ?: return ""
 
         val remoteDescription = SessionDescription(SessionDescription.Type.OFFER, offerSdp)
+        
         peerConnection.setRemoteDescription(object : SdpObserver {
             override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onSetSuccess() {
@@ -113,8 +116,8 @@ class MainActivity : ComponentActivity() {
                             latch.countDown()
                         }
                     }
-                    override fun onSetSuccess() {}
                     override fun onCreateFailure(p0: String?) { latch.countDown() }
+                    override fun onSetSuccess() {}
                     override fun onSetFailure(p0: String?) { latch.countDown() }
                 }, MediaConstraints())
             }
@@ -147,7 +150,7 @@ fun StreamerDashboard() {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(text = "Zero-Touch API 36 Streamer Active", style = MaterialTheme.typography.titleMedium)
+        Text(text = "Root WebRTC Streamer Active", style = MaterialTheme.typography.titleMedium)
         Spacer(modifier = Modifier.height(12.dp))
         Text(
             text = "iPhone Target: http://192.168.43.1:8080",
