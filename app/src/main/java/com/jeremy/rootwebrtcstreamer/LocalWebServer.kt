@@ -18,7 +18,7 @@ class LocalWebServer(
             } catch (e: IOException) {
                 return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "IO Error: ${e.message}")
             } catch (e: ResponseException) {
-                return newFixedLengthResponse(session.status, MIME_PLAINTEXT, "Response Error: ${e.message}")
+                return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Response Error: ${e.message}")
             }
 
             val clientOfferSdp = map["postData"] ?: session.parms["offer"] ?: ""
