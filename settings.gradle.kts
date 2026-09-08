@@ -26,3 +26,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "RootWebRTCStreamer"
 include(":app")
+include(":tv")
